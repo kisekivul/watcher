@@ -10,27 +10,40 @@ import (
 
 // Watcher watcher
 type Watcher struct {
-	locker sync.RWMutex
-	w      *fsnotify.Watcher
-	e      map[string]*Event
-	p      map[string]struct{}
-	o      func(*Watcher, *Event)
-	d      func(*Event, *Event) bool
+	locker   sync.RWMutex
+	logger   Logger
+	notifier *fsnotify.Watcher
+	e        map[string]*Event
+	p        map[string]struct{}
+	o        func(*Watcher, *Event)
+	d        func(*Event, *Event) bool
 }
 
-func NewWatcher() (*Watcher, error) {
+// NewWatcher new watcher
+func NewWatcher(paths []string, logger Logger) (*Watcher, error) {
 	var (
-		watcher *Watcher
-		err     error
+		notifier *fsnotify.Watcher
+		watcher  *Watcher
+		err      error
 	)
 
-	watcher.w, err = fsnotify.NewWatcher()
-	if err != nil {
-		return nil, err
+	if notifier, err = fsnotify.NewWatcher(); err == nil {
+		if logger == nil {
+			logger = DefaultLogger
+		}
+
+		watcher = &Watcher{
+			logger:   logger,
+			notifier: notifier,
+			e:        make(map[string]*Event),
+			p:        make(map[string]struct{}),
+		}
+
+		for _, p := range paths {
+			watcher.Add(p)
+		}
 	}
-	watcher.e = make(map[string]*Event)
-	watcher.p = make(map[string]struct{})
-	return watcher, nil
+	return watcher, err
 }
 
 // Prepare prepare watcher
@@ -56,7 +69,7 @@ func (w *Watcher) Run() *Watcher {
 
 		for {
 			select {
-			case e, ok = <-w.w.Events:
+			case e, ok = <-w.notifier.Events:
 				if !ok {
 					break
 				}
@@ -106,7 +119,7 @@ func (w *Watcher) Run() *Watcher {
 						w.o(w, event)
 					}
 				}
-			case err = <-w.w.Errors:
+			case err = <-w.notifier.Errors:
 				if err != nil {
 					log.Println("fsnotify", err)
 				}
@@ -121,7 +134,7 @@ func (w *Watcher) Exit() {
 	w.locker.Lock()
 	defer w.locker.Unlock()
 
-	w.w.Close()
+	w.notifier.Close()
 }
 
 // Operate reply to operation
@@ -143,7 +156,7 @@ func (w *Watcher) Add(path string) *Watcher {
 	// update dict
 	w.p[path] = struct{}{}
 	// update watcher
-	w.w.Add(path)
+	w.notifier.Add(path)
 	return w
 }
 
@@ -154,7 +167,7 @@ func (w *Watcher) Remove(path string) *Watcher {
 	// update dict
 	delete(w.p, path)
 	// update watcher
-	w.w.Remove(path)
+	w.notifier.Remove(path)
 	return w
 }
 
